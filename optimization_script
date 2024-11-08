@@ -1,105 +1,141 @@
--- Schema Creation
--- Creating schema for e-commerce data
+-- Schema Creation with Better Organization and Performance Optimizations
+CREATE SCHEMA IF NOT EXISTS ecommerce;
 
-CREATE SCHEMA ecommerce;
+-- Enable parallel query execution
+SET max_parallel_workers_per_gather = 4;
 
--- Create table for products
+-- Create custom types for better data integrity
+CREATE TYPE product_category AS ENUM ('Electronics', 'Furniture');
+
+-- Create tables with appropriate constraints and comments
 CREATE TABLE ecommerce.products (
-    product_id INT PRIMARY KEY,
-    product_name VARCHAR(255),
-    category VARCHAR(100),
-    price DECIMAL(10, 2)
+    product_id SERIAL PRIMARY KEY,
+    product_name VARCHAR(255) NOT NULL,
+    category product_category NOT NULL,
+    price DECIMAL(10, 2) NOT NULL CHECK (price >= 0),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_product_name UNIQUE (product_name)
 );
 
--- Create table for sales
+-- Create sales table with partitioning
 CREATE TABLE ecommerce.sales (
-    sale_id INT PRIMARY KEY,
-    product_id INT REFERENCES ecommerce.products(product_id),
-    sale_date DATE,
-    quantity INT,
-    total DECIMAL(10, 2)
-);
+    sale_id SERIAL,
+    product_id INT NOT NULL,
+    sale_date DATE NOT NULL,
+    quantity INT NOT NULL CHECK (quantity > 0),
+    total DECIMAL(10, 2) NOT NULL CHECK (total >= 0),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (sale_id, sale_date)
+) PARTITION BY RANGE (sale_date);
 
--- Inserting sample data into products table
-INSERT INTO ecommerce.products (product_id, product_name, category, price) VALUES 
-(1, 'Laptop', 'Electronics', 1000.00),
-(2, 'Smartphone', 'Electronics', 500.00),
-(3, 'Desk Chair', 'Furniture', 150.00);
+-- Create partitions for better query performance
+CREATE TABLE ecommerce.sales_2024_q1 PARTITION OF ecommerce.sales
+    FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+CREATE TABLE ecommerce.sales_2024_q2 PARTITION OF ecommerce.sales
+    FOR VALUES FROM ('2024-04-01') TO ('2024-07-01');
+CREATE TABLE ecommerce.sales_2024_q3 PARTITION OF ecommerce.sales
+    FOR VALUES FROM ('2024-07-01') TO ('2024-10-01');
+CREATE TABLE ecommerce.sales_2024_q4 PARTITION OF ecommerce.sales
+    FOR VALUES FROM ('2024-10-01') TO ('2025-01-01');
 
--- Inserting sample data into sales table
-INSERT INTO ecommerce.sales (sale_id, product_id, sale_date, quantity, total) VALUES 
-(1, 1, '2024-01-01', 2, 2000.00),
-(2, 2, '2024-01-02', 3, 1500.00),
-(3, 3, '2024-01-03', 1, 150.00);
+-- Add foreign key after table creation
+ALTER TABLE ecommerce.sales 
+    ADD CONSTRAINT fk_sales_product 
+    FOREIGN KEY (product_id) 
+    REFERENCES ecommerce.products(product_id) 
+    ON DELETE RESTRICT;
 
--- Optimizing Query Performance
--- Creating indexes to improve query performance
+-- Create optimized indexes
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sales_product_id 
+    ON ecommerce.sales (product_id, sale_date);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sales_date 
+    ON ecommerce.sales (sale_date DESC, total);
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_products_category 
+    ON ecommerce.products (category, price);
 
--- Index on product_id in sales table for faster joins
-CREATE INDEX idx_sales_product_id ON ecommerce.sales (product_id);
+-- Create function to update timestamp
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
--- Index on sale_date in sales table for faster date range queries
-CREATE INDEX idx_sales_sale_date ON ecommerce.sales (sale_date);
+-- Create triggers for timestamp management
+CREATE TRIGGER update_products_timestamp
+    BEFORE UPDATE ON ecommerce.products
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
 
--- Analyze Command
--- Gathering statistics for the query optimizer
+-- Insert sample data with error handling
+DO $$
+BEGIN
+    INSERT INTO ecommerce.products (product_id, product_name, category, price) 
+    VALUES 
+        (1, 'Laptop', 'Electronics', 1000.00),
+        (2, 'Smartphone', 'Electronics', 500.00),
+        (3, 'Desk Chair', 'Furniture', 150.00)
+    ON CONFLICT (product_id) DO NOTHING;
 
-ANALYZE ecommerce.products;
-ANALYZE ecommerce.sales;
+    INSERT INTO ecommerce.sales (sale_id, product_id, sale_date, quantity, total) 
+    VALUES 
+        (1, 1, '2024-01-01', 2, 2000.00),
+        (2, 2, '2024-01-02', 3, 1500.00),
+        (3, 3, '2024-01-03', 1, 150.00)
+    ON CONFLICT (sale_id, sale_date) DO NOTHING;
+END $$;
 
--- Optimized Query Examples
-
--- Example 1: Total sales by product
+-- Optimized query examples with CTEs and window functions
+-- Total sales by product with year-over-year comparison
+WITH yearly_sales AS (
+    SELECT 
+        p.product_name,
+        EXTRACT(YEAR FROM s.sale_date) AS sale_year,
+        SUM(s.total) AS total_sales,
+        COUNT(*) AS number_of_sales
+    FROM 
+        ecommerce.products p
+        JOIN ecommerce.sales s ON p.product_id = s.product_id
+    GROUP BY 
+        p.product_name, 
+        EXTRACT(YEAR FROM s.sale_date)
+)
 SELECT 
-    p.product_name,
-    SUM(s.total) AS total_sales
+    product_name,
+    sale_year,
+    total_sales,
+    LAG(total_sales) OVER (PARTITION BY product_name ORDER BY sale_year) AS prev_year_sales,
+    ROUND(
+        ((total_sales - LAG(total_sales) OVER (PARTITION BY product_name ORDER BY sale_year)) 
+        / LAG(total_sales) OVER (PARTITION BY product_name ORDER BY sale_year) * 100)::numeric, 
+        2
+    ) AS yoy_growth
 FROM 
-    ecommerce.products p
-JOIN 
-    ecommerce.sales s ON p.product_id = s.product_id
-GROUP BY 
-    p.product_name
+    yearly_sales
 ORDER BY 
-    total_sales DESC;
+    product_name, 
+    sale_year;
 
--- Example 2: Monthly sales trends
-SELECT 
-    DATE_TRUNC('month', s.sale_date) AS month,
-    SUM(s.total) AS monthly_sales
-FROM 
-    ecommerce.sales s
-GROUP BY 
-    month
-ORDER BY 
-    month;
+-- Maintenance commands wrapped in a function
+CREATE OR REPLACE FUNCTION ecommerce.maintain_tables()
+RETURNS void AS $$
+BEGIN
+    -- Update statistics
+    ANALYZE VERBOSE ecommerce.products;
+    ANALYZE VERBOSE ecommerce.sales;
+    
+    -- Reclaim space and update visibility map
+    VACUUM (ANALYZE, VERBOSE) ecommerce.products;
+    VACUUM (ANALYZE, VERBOSE) ecommerce.sales;
+    
+    -- Reindex tables
+    REINDEX TABLE CONCURRENTLY ecommerce.products;
+    REINDEX TABLE CONCURRENTLY ecommerce.sales;
+END;
+$$ LANGUAGE plpgsql;
 
--- Example 3: Top selling products in a date range
-SELECT 
-    p.product_name,
-    SUM(s.quantity) AS total_quantity_sold
-FROM 
-    ecommerce.products p
-JOIN 
-    ecommerce.sales s ON p.product_id = s.product_id
-WHERE 
-    s.sale_date BETWEEN '2024-01-01' AND '2024-01-31'
-GROUP BY 
-    p.product_name
-ORDER BY 
-    total_quantity_sold DESC;
-
--- Performance Enhancements
--- Vacuum Command
--- Reclaim storage occupied by dead tuples
-
-VACUUM FULL ecommerce.products;
-VACUUM FULL ecommerce.sales;
-
--- Using Partitioning
--- Partitioning the sales table for faster access to large datasets
-
--- Example: Partition by Year
-CREATE TABLE ecommerce.sales_2024 PARTITION OF ecommerce.sales FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
-
--- 0 0 * * 0 psql -U username -d database -f /path/to/optimization_script.sql for cron job
-
+-- Create a more efficient cron job command
+-- Replace with actual values:
+-- 0 0 * * 0 psql -U username -d database -c "SELECT ecommerce.maintain_tables();"
