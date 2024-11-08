@@ -73,4 +73,4 @@ ON CONFLICT (stock_id) DO UPDATE SET
 
 DROP TABLE IF EXISTS stock_staging, stock_transformed;
 
--- * * * * * psql -U username -d database -f /path/to/etl_pipeline.sql for job scheduler like cron (Linux) or SQL Agent (SQL Server) to automate the execution at regular intervals;
+-- * * * * * psql -U username -d database -f /path/to/etl_pipeline_for_realtime_data_intake.sql for job scheduler like cron (Linux) or SQL Agent (SQL Server) to automate the execution at regular intervals;
