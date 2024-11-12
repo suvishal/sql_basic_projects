@@ -16,7 +16,7 @@ CREATE TABLE table_name (
 ) PARTITION BY RANGE (date_column);
 
 CREATE TABLE partition_2023 PARTITION OF table_name
-    FOR VALUES FROM ('2023-01-01') TO ('2023-12-31');
+    FOR VALUES FROM ('2024-10-12') TO ('2024-11-12');
 
 -- Check query execution plan
 EXPLAIN SELECT * FROM table1 INNER JOIN table2 ON table1.id = table2.id WHERE conditions;
