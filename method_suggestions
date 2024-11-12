@@ -1,0 +1,35 @@
+-- methods to avoid bottlenecks
+-- Reorganize index
+ALTER INDEX index_name ON table_name REORGANIZE;
+
+-- Rebuild index
+ALTER INDEX index_name ON table_name REBUILD;
+
+-- Retrieve specific columns
+SELECT column1, column2 FROM table_name WHERE conditions LIMIT 100;
+
+-- Creating a range partitioned table in PostgreSQL
+CREATE TABLE table_name (
+    id SERIAL PRIMARY KEY,
+    date_column DATE,
+    data_column VARCHAR(255)
+) PARTITION BY RANGE (date_column);
+
+CREATE TABLE partition_2023 PARTITION OF table_name
+    FOR VALUES FROM ('2023-01-01') TO ('2023-12-31');
+
+-- Check query execution plan
+EXPLAIN SELECT * FROM table1 INNER JOIN table2 ON table1.id = table2.id WHERE conditions;
+
+-- Creating a materialized view
+CREATE MATERIALIZED VIEW view_name AS SELECT * FROM large_table WHERE conditions;
+
+-- For MySQL, use the COMPRESSED row format for tables
+ALTER TABLE table_name ROW_FORMAT=COMPRESSED;
+
+-- Using NOLOCK hint (SQL Server)
+SELECT column1, column2 FROM table_name WITH (NOLOCK) WHERE conditions;
+
+-- Delete old records
+DELETE FROM table_name WHERE date_column < '2023-01-01';
+
